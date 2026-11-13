@@ -1,0 +1,174 @@
+#!/opt/python3/bin/python3
+"""Calendar sync: settings of the iCal feeds that are kept in the Maemo Calendar (Python 3 + hildonlite).
+The GUI edits ~/.ical-sync/sources.conf; the synchronisation itself is the command ical-sync, started every 30 minutes by cron
+(job ical-sync). "Sync now" and the removal of a source run that command in the background."""
+import os, re, subprocess, sys, time
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+try:
+    import hildonlite as hl
+except ImportError:                       # in the repository: the copy of hildonlite next to this application
+    sys.path.insert(0, os.path.join(HERE, "..", "hildonlite"))
+    import hildonlite as hl
+import ical_sync as S
+
+CLI = [sys.executable, os.path.join(HERE, "ical-sync")]
+INTERVALS = [("30 minutes", 30), ("1 hour", 60), ("3 hours", 180), ("6 hours", 360), ("12 hours", 720), ("24 hours", 1440)]
+PASTS = [("none", 0), ("7 days", 7), ("14 days", 14), ("30 days", 30)]
+KEEP_ALL, KEEP_FUTURE, KEEP_NONE = 11, 12, 13           # responses of the removal dialog
+
+
+def interval_text(minutes):
+    for text, m in INTERVALS:
+        if m == minutes:
+            return text
+    return "%d min" % minutes
+
+
+def closest(options, value):
+    return min(range(len(options)), key=lambda i: abs(options[i][1] - value))
+
+
+def source_rows(cp, st):
+    rows = []
+    for n in S.source_names(cp):
+        sec, info = cp[n], st.get(n, {})
+        last = info.get("last")
+        text = "every %s, " % interval_text(int(sec.get("interval_minutes", "360") or 360))
+        text += ("last %s, %d items" % (time.strftime("%d.%m. %H:%M", time.localtime(last)), len(info.get("items", {})))) if last else "not synchronised yet"
+        if info.get("error"):
+            text += " (last try failed)"
+        rows.append([n + "  >  " + (sec.get("calendar") or n), text])
+    return rows
+
+
+def main():
+    if not hl.init():
+        sys.exit("no X display")
+    cp = S.load_conf()
+    proc = []                                           # the running background command (one at a time)
+
+    win = hl.Window("Calendar sync")
+    root = hl.VBox(spacing=6)
+    status = root.add(hl.Label("", markup=True, wrap=True, xalign=0.0))
+    logging_box = root.add(hl.CheckButton("Keep a log (~/.ical-sync/sync.log)", S.logging_on(cp), lambda w: set_logging(w.get_active())))
+    root.add(hl.Label("Followed calendars (iCal addresses)", xalign=0.0))
+    store = hl.ListStore(2)
+    lv = hl.ListView(store)
+    area = hl.PannableArea()
+    area.add(lv)
+    root.add(area, expand=True)
+    buttons = hl.HBox(spacing=6, homogeneous=True)
+    root.add(buttons)
+
+    def set_logging(on):
+        S.set_general(cp, "logging", "yes" if on else "no")
+
+    def reload():
+        nonlocal cp
+        cp = S.load_conf()
+        store.clear()
+        for row in source_rows(cp, S.load_state()):
+            store.append(row)
+
+    def selected_name():
+        row = lv.selected()
+        return row[0].split("  >  ")[0] if row else None
+
+    def run_bg(args, done_text):
+        if proc:
+            hl.Banner(win, "Please wait, a synchronisation is running")
+            return
+        proc.append((subprocess.Popen(CLI + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL), done_text))
+        refresh()
+
+    def refresh():
+        if proc and proc[0][0].poll() is not None:
+            p, text = proc.pop()
+            hl.Banner(win, text if p.returncode == 0 else "It failed (see the log)")
+            reload()
+        if proc:
+            status.set_text("<b>Working...</b> (a few seconds per hundred events)", markup=True)
+        else:
+            st = S.load_state()
+            lasts = [v.get("last", 0) for v in st.values()]
+            when = time.strftime("%d.%m.%Y %H:%M", time.localtime(max(lasts))) if lasts and max(lasts) else "never"
+            status.set_text("Last synchronisation: <b>%s</b>. Cron checks every 30 minutes, only when the phone is online." % when, markup=True)
+        return True
+
+    def edit(name=None):
+        new = name is None
+        sec = {"url": "", "calendar": "", "interval_minutes": "360", "keep_past_days": "30"} if new else dict(cp[name])
+        d = hl.Dialog("Add a calendar" if new else "Edit " + name, win)
+        e_name = hl.Entry(name or "")
+        e_url = hl.Entry(sec["url"])
+        e_cal = hl.Entry(sec.get("calendar", ""))
+        p_int = hl.PickerButton("Update every", [t for t, _ in INTERVALS], closest(INTERVALS, int(sec.get("interval_minutes") or 360)))
+        p_past = hl.PickerButton("Keep the past", [t for t, _ in PASTS], closest(PASTS, int(sec.get("keep_past_days") or 30)))
+        if new:
+            d.body.add(hl.Label("Name", xalign=0.0)); d.body.add(e_name)
+        d.body.add(hl.Label("iCal address (https:// or webcal://, .ics)", xalign=0.0)); d.body.add(e_url)
+        d.body.add(hl.Label("Calendar in the phone (empty: the name)", xalign=0.0)); d.body.add(e_cal)
+        d.body.add(p_int); d.body.add(p_past)
+        d.add_button("Save", hl.OK); d.add_button("Cancel", hl.CANCEL)
+        d.show()
+        while True:
+            if d.run() != hl.OK:
+                d.destroy()
+                return
+            n = name or e_name.get_text().strip()
+            url = e_url.get_text().strip()
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", n or ""):
+                hl.Banner(win, "The name: letters, digits, - _ . only")
+            elif new and cp.has_section(n):
+                hl.Banner(win, "That name exists already")
+            elif not re.match(r"(https?|webcal)://", url):
+                hl.Banner(win, "The address must start with https:// or webcal://")
+            else:
+                break
+            d.show()
+        cp[n] = {"url": url, "calendar": e_cal.get_text().strip() or n, "interval_minutes": str(INTERVALS[p_int.get_active()][1]),
+                 "keep_past_days": str(PASTS[p_past.get_active()][1])}
+        d.destroy()
+        S.save_conf(cp)
+        reload()
+        if new:
+            run_bg(["sync", "--force", n], "%s synchronised" % n)
+
+    def remove():
+        name = selected_name()
+        if not name:
+            hl.Banner(win, "Tap a calendar first")
+            return
+        d = hl.Dialog("Stop following " + name, win)
+        d.body.add(hl.Label("What to do with the events of the calendar %r in the phone?" % (cp[name].get("calendar") or name), wrap=True, xalign=0.0))
+        d.add_button("Delete all", KEEP_ALL); d.add_button("Delete future", KEEP_FUTURE)
+        d.add_button("Keep all", KEEP_NONE); d.add_button("Cancel", hl.CANCEL)
+        d.show()
+        r = d.run()
+        d.destroy()
+        if r in (KEEP_ALL, KEEP_FUTURE, KEEP_NONE):
+            mode = {KEEP_ALL: "all", KEEP_FUTURE: "future", KEEP_NONE: "none"}[r]
+            run_bg(["remove", name, "--events", mode], "%s removed" % name)
+
+    buttons.add(hl.Button("Add", on_clicked=lambda b: edit()), expand=True)
+    buttons.add(hl.Button("Edit", on_clicked=lambda b: (selected_name() and edit(selected_name())) or hl.Banner(win, "Tap a calendar first")), expand=True)
+    buttons.add(hl.Button("Remove", on_clicked=lambda b: remove()), expand=True)
+    buttons.add(hl.Button("Sync now", on_clicked=lambda b: run_bg(["sync", "--force"], "Synchronised")), expand=True)
+    lv.connect("row-activated", lambda w: None)
+
+    win.add(root)
+    menu = hl.AppMenu()
+    menu.add("Quit", lambda b: hl.quit())
+    win.set_menu(menu)
+    reload()
+    refresh()
+    hl.timeout(1500, refresh)
+    win.show()
+    if os.environ.get("ICALSYNC_TIMEOUT"):               # self-test / screenshots
+        hl.timeout(int(os.environ["ICALSYNC_TIMEOUT"]) * 1000, lambda: hl.quit() or False)
+    hl.main()
+
+
+if __name__ == "__main__":
+    main()

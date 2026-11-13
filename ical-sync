@@ -1,0 +1,6 @@
+#!/opt/python3/bin/python3
+"""ical-sync: command line of the iCal synchronisation into the Maemo Calendar (see ical_sync.py)."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import ical_sync
+ical_sync.main()

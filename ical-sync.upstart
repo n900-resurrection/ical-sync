@@ -1,0 +1,11 @@
+description "ical-sync: cron for the synchronisation of iCal feeds into the Calendar"
+author "elPytel"
+
+# BusyBox crond with the crontab /var/spool/cron/crontabs/user: "ical-sync.py sync --if-online" every 30 minutes. The script does
+# nothing unless the interval of a source has elapsed and a connection is up already; crond does not wake the sleeping phone.
+start on started xomap
+stop on stopped xomap
+
+console none
+respawn
+exec /bin/busybox crond -f -c /var/spool/cron/crontabs -L /dev/null
