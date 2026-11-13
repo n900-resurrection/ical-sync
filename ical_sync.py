@@ -338,7 +338,10 @@ def download(url):
 def sync_source(be, name, sec, st, dry=False):
     url, title = sec["url"], sec.get("calendar") or name
     keep = max(0, min(MAX_PAST_DAYS, int(sec.get("keep_past_days", "30"))))
-    tz, items = parse_feed(download(url))
+    text = download(url)
+    if "BEGIN:VCALENDAR" not in text[:4096].upper():
+        raise ValueError("not an iCal feed (a web page?): use the secret/public address in iCal format, ending with .ics")
+    tz, items = parse_feed(text)
     limit = date.today() - timedelta(days=keep)
     live = {uid: bl for uid, bl in items.items() if not is_cancelled(bl)}
     want = {uid: bl for uid, bl in live.items() if not is_old(bl, limit)}
