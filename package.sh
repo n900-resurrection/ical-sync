@@ -15,6 +15,8 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/opt/$PKG" "$STAGE/usr/bin" "$STAGE/usr/share/applications/hildon" "$STAGE/etc/event.d" "$STAGE/DEBIAN"
 install -m 755 "$HERE/ical-sync" "$HERE/ical-sync-gui" "$STAGE/opt/$PKG/"
 install -m 644 "$HERE/ical_sync.py" "$STAGE/opt/$PKG/"
+mkdir -p "$STAGE/opt/$PKG/icons"
+install -m 644 "$HERE/icons/reload.png" "$HERE/icons/remove.png" "$STAGE/opt/$PKG/icons/"
 install -m 644 "$HERE/ical-sync.upstart" "$STAGE/etc/event.d/ical-sync"
 for sz in 48 64; do
     mkdir -p "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps"

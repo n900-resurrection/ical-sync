@@ -1,8 +1,8 @@
 #!/opt/python3/bin/python3
 """Calendar sync: settings of the iCal feeds that are kept in the Maemo Calendar (Python 3 + hildonlite).
 The GUI edits ~/.ical-sync/sources.conf; the synchronisation itself is the command ical-sync, started every 30 minutes by cron
-(job ical-sync). "Sync now" and the removal of a source run that command in the background."""
-import os, re, subprocess, sys, time
+(job ical-sync). "Sync all", the reload button of a row and the removal of a source run that command in the background."""
+import ctypes, os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 try:
@@ -52,12 +52,12 @@ def main():
     root = hl.VBox(spacing=6)
     status = root.add(hl.Label("", markup=True, wrap=True, xalign=0.0))
     logging_box = root.add(hl.CheckButton("Keep a log (~/.ical-sync/sync.log)", S.logging_on(cp), lambda w: set_logging(w.get_active())))
-    root.add(hl.Label("Followed calendars (iCal addresses)", xalign=0.0))
-    store = hl.ListStore(2)
-    lv = hl.ListView(store)
+    root.add(hl.Label("Followed calendars (iCal addresses): tap one to edit it", xalign=0.0))
     area = hl.PannableArea()
-    area.add(lv)
+    holder = hl.VBox()
+    area.add_viewport(holder)
     root.add(area, expand=True)
+    rows = []                                           # the box with the current rows (replaced on every reload)
     buttons = hl.HBox(spacing=6, homogeneous=True)
     root.add(buttons)
 
@@ -67,13 +67,20 @@ def main():
     def reload():
         nonlocal cp
         cp = S.load_conf()
-        store.clear()
-        for row in source_rows(cp, S.load_state()):
-            store.append(row)
-
-    def selected_name():
-        row = lv.selected()
-        return row[0].split("  >  ")[0] if row else None
+        while rows:
+            rows.pop().destroy()
+        box = holder.add(hl.VBox(spacing=4))
+        rows.append(box)
+        for n, (title, text) in zip(S.source_names(cp), source_rows(cp, S.load_state())):
+            line = hl.HBox(spacing=4)
+            line.add(hl.ImageButton(os.path.join(HERE, "icons", "reload.png"), lambda b, n=n: run_bg(["sync", "--force", n], "%s synchronised" % n), width=70, label="Sync"))
+            main = hl.Button(title, text, lambda b, n=n: edit(n), size=hl.FINGER)
+            main.set_size_request(640, -1)
+            line.add(main, expand=True)
+            cross = hl.ImageButton(os.path.join(HERE, "icons", "remove.png"), lambda b, n=n: remove(n), width=70, label="X")
+            hl._fn("gtk", "gtk_box_pack_end", None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_uint)(line.ptr, cross.ptr, 0, 0, 0)
+            box.add(line)
+        hl._fn("gtk", "gtk_widget_show_all", None, ctypes.c_void_p)(holder.ptr)
 
     def run_bg(args, done_text):
         if proc:
@@ -135,11 +142,7 @@ def main():
         if new:
             run_bg(["sync", "--force", n], "%s synchronised" % n)
 
-    def remove():
-        name = selected_name()
-        if not name:
-            hl.Banner(win, "Tap a calendar first")
-            return
+    def remove(name):
         d = hl.Dialog("Stop following " + name, win)
         d.body.add(hl.Label("What to do with the events of the calendar %r in the phone?" % (cp[name].get("calendar") or name), wrap=True, xalign=0.0))
         d.add_button("Delete all", KEEP_ALL); d.add_button("Delete future", KEEP_FUTURE)
@@ -152,10 +155,7 @@ def main():
             run_bg(["remove", name, "--events", mode], "%s removed" % name)
 
     buttons.add(hl.Button("Add", on_clicked=lambda b: edit()), expand=True)
-    buttons.add(hl.Button("Edit", on_clicked=lambda b: (selected_name() and edit(selected_name())) or hl.Banner(win, "Tap a calendar first")), expand=True)
-    buttons.add(hl.Button("Remove", on_clicked=lambda b: remove()), expand=True)
-    buttons.add(hl.Button("Sync now", on_clicked=lambda b: run_bg(["sync", "--force"], "Synchronised")), expand=True)
-    lv.connect("row-activated", lambda w: None)
+    buttons.add(hl.Button("Sync all", on_clicked=lambda b: run_bg(["sync", "--force"], "Synchronised")), expand=True)
 
     win.add(root)
     menu = hl.AppMenu()
