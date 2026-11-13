@@ -46,6 +46,12 @@ case "$1" in configure)
     echo '*/30 * * * * HOME=/home/user /opt/ical-sync/ical-sync sync --if-online >/dev/null 2>&1   # ical-sync' >> "$CT.new"
     chmod 600 "$CT.new"; mv "$CT.new" "$CT"
     su user -c "HOME=/home/user /opt/ical-sync/ical-sync init" >/dev/null 2>&1 || true
+    # Only one crond may run (the crontab lines would run twice): the job that sfeed-hildon made for itself gives way to ours.
+    EVD="${EVENT_D:-/etc/event.d}"
+    if [ -f "$EVD/sfeed-hildon-cron" ]; then
+        initctl stop sfeed-hildon-cron >/dev/null 2>&1 || true
+        rm -f "$EVD/sfeed-hildon-cron"
+    fi
     initctl start ical-sync >/dev/null 2>&1 || true ;;
 esac
 exit 0
@@ -59,7 +65,23 @@ cat > "$STAGE/DEBIAN/postrm" <<'EOT'
 #!/bin/sh
 # Remove: the crontab line goes, the settings and the Calendar events stay (~/.ical-sync).
 CT=/var/spool/cron/crontabs/user
-case "$1" in remove|purge) [ -f "$CT" ] && { grep -v "ical-sync" "$CT" > "$CT.new" || true; mv "$CT.new" "$CT"; chmod 600 "$CT"; } ;; esac
+case "$1" in remove|purge)
+    [ -f "$CT" ] && { grep -v "ical-sync" "$CT" > "$CT.new" || true; mv "$CT.new" "$CT"; chmod 600 "$CT"; }
+    # sfeed-hildon uses the crond of this job: when it is installed, it gets a job of its own again
+    EVD="${EVENT_D:-/etc/event.d}"
+    if [ -f "$CT" ] && grep -q "sfeed-hildon" "$CT" && ! grep -ls "crond" "$EVD"/* 2>/dev/null | grep -q .; then
+        cat > "$EVD/sfeed-hildon-cron" <<'EOJ'
+description "sfeed-hildon: cron for the background update of the feeds"
+author "elPytel"
+start on started xomap
+stop on stopped xomap
+console none
+respawn
+exec /bin/busybox crond -f -c /var/spool/cron/crontabs -L /dev/null
+EOJ
+        initctl start sfeed-hildon-cron >/dev/null 2>&1 || true
+    fi ;;
+esac
 exit 0
 EOT
 chmod 755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/prerm" "$STAGE/DEBIAN/postrm"
