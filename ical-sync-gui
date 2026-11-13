@@ -14,7 +14,7 @@ import ical_sync as S
 
 CLI = [sys.executable, os.path.join(HERE, "ical-sync")]
 INTERVALS = [("30 minutes", 30), ("1 hour", 60), ("3 hours", 180), ("6 hours", 360), ("12 hours", 720), ("24 hours", 1440)]
-PASTS = [("none", 0), ("7 days", 7), ("14 days", 14), ("30 days", 30)]
+PASTS = [("none", 0), ("7 days", 7), ("14 days", 14), ("30 days", 30), ("90 days", 90), ("1 year", 365)]
 KEEP_ALL, KEEP_FUTURE, KEEP_NONE = 11, 12, 13           # responses of the removal dialog
 
 
@@ -104,7 +104,7 @@ def main():
         e_url = hl.Entry(sec["url"])
         e_cal = hl.Entry(sec.get("calendar", ""))
         p_int = hl.PickerButton("Update every", [t for t, _ in INTERVALS], closest(INTERVALS, int(sec.get("interval_minutes") or 360)))
-        p_past = hl.PickerButton("Keep the past", [t for t, _ in PASTS], closest(PASTS, int(sec.get("keep_past_days") or 30)))
+        p_past = hl.PickerButton("Update the past", [t for t, _ in PASTS], closest(PASTS, int(sec.get("keep_past_days") or 30)))
         if new:
             d.body.add(hl.Label("Name", xalign=0.0)); d.body.add(e_name)
         d.body.add(hl.Label("iCal address (https:// or webcal://, .ics)", xalign=0.0)); d.body.add(e_url)

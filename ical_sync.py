@@ -16,7 +16,7 @@ Sources are kept in ~/.ical-sync/sources.conf (mode 600, the URL of a secret iCa
 
 The Calendar library finds duplicates only by summary + start + type (not by UID), so every item of the feed is
 tracked by its UID and a hash of its text: a new UID is imported, a changed one is deleted and imported again,
-one that disappeared from the feed (or is cancelled, or ended more than --keep-past days ago, at most 30) is deleted;
+one that disappeared from the feed (or is cancelled) is deleted; one that ended more than --keep-past days ago (at most 365) is left in the calendar as it is and no longer synced (not imported either);
 one that was deleted in the phone comes back (the feed is the master). The future is kept as far as the feed goes.
 Items that are not in the map (made by hand in the phone) are never touched.
 """
@@ -44,7 +44,7 @@ LOG = os.path.join(DIR, "sync.log")
 LOCK = os.path.join(DIR, "lock")
 CALDB = os.environ.get("ICALSYNC_CALDB") or os.path.join(HOME, ".calendar", "calendardb")
 CAFILE = "/opt/curl/etc/ssl/cacert.pem"
-MAX_PAST_DAYS = 30
+MAX_PAST_DAYS = 365
 LOG_LIMIT = 100000
 DEFAULT_SOURCES = {
     "holidays": {"url": "https://calendar.google.com/calendar/ical/cs.czech%23holiday%40group.v.calendar.google.com/public/basic.ics",
@@ -340,7 +340,9 @@ def sync_source(be, name, sec, st, dry=False):
     keep = max(0, min(MAX_PAST_DAYS, int(sec.get("keep_past_days", "30"))))
     tz, items = parse_feed(download(url))
     limit = date.today() - timedelta(days=keep)
-    want = {uid: bl for uid, bl in items.items() if not is_cancelled(bl) and not is_old(bl, limit)}
+    live = {uid: bl for uid, bl in items.items() if not is_cancelled(bl)}
+    want = {uid: bl for uid, bl in live.items() if not is_old(bl, limit)}
+    frozen = {uid for uid in live if uid not in want}          # over for more than keep_past_days: stays in the phone as it is
     mine = st.setdefault(name, {"items": {}})["items"]
     cal = be.calendar(title, create=not dry)
     if cal is None:
@@ -352,9 +354,9 @@ def sync_source(be, name, sec, st, dry=False):
     existing = component_ids(cal_id) if cal_id >= 0 else set()
     # changed in the feed, or deleted in the phone meanwhile (it comes back: the feed is the master)
     changed = [u for u in want if u in mine and (mine[u]["hash"] != item_hash(want[u]) or not set(mine[u]["ids"]) <= existing)]
-    gone = [u for u in mine if u not in want]
-    log("%s: feed has %d items; new %d, changed %d, removed %d, unchanged %d" %
-          (name, len(items), len(new), len(changed), len(gone), len(want) - len(new) - len(changed)))
+    gone = [u for u in mine if u not in want and u not in frozen]
+    log("%s: feed has %d items; new %d, changed %d, removed %d, unchanged %d, old (left alone) %d" %
+          (name, len(items), len(new), len(changed), len(gone), len(want) - len(new) - len(changed), len(frozen)))
     if dry:
         return
     for uid in gone + changed:
